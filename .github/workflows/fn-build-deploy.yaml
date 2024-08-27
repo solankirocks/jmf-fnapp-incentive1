@@ -77,9 +77,9 @@ jobs:
         name: ${{ matrix.artifact-name }}
 
     - name: "Log in with Azure 🆔"
-        uses: azure/login@v2
-        with:
-          creds: "${{ secrets.AZURE_CREDENTIALS }}"
+      uses: azure/login@v2
+      with:
+        creds: "${{ secrets.AZURE_CREDENTIALS }}"
 
     - name: Clean-up Working Directory
       run: rm -rf ./*
