@@ -1,0 +1,112 @@
+name: Build & Deploy Function
+run-name: Build & Deploy Function 🚀 ${{ inputs.Environment }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      Environment:
+        type: choice
+        description: 'Environment'
+        required: true
+        options: 
+           - dev
+           - stg
+           - uat
+           - prod
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  buildConfiguration: Release
+
+jobs:
+
+  build:
+    name: Build Solution
+    runs-on: internal
+    strategy:
+      matrix:
+        include:
+          - path: './src/FunctionSample/FunctionSample.csproj'
+            artifact-name: 'function-sample'
+    steps:
+
+    - uses: actions/checkout@v2
+
+    # Step 1 - Install dependencies
+    - name: Install .Net Core 6 SDK
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: 20.x
+
+    # Step 2 - Build artifacts
+    - name: Build Paved Road Function
+      run: dotnet build ${{ matrix.path }}
+
+    # Step 3 - Publish artifacts to artifact staging directory
+    - name: Publish Paved Road Function
+      run: dotnet publish ${{ matrix.path }} --configuration ${{ env.buildConfiguration }} --output ${{ github.workspace }}
+
+    # Step 4 - Publish artifact
+    - name: Publish Drop Artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        path: ${{ github.workspace }}
+        name: ${{ matrix.artifact-name }}
+
+  deploy-code:
+    name: Deploy Code - ${{ inputs.Environment }}
+    runs-on: internal
+    environment: ${{ inputs.Environment }}
+    strategy:
+      matrix:
+        artifact-name: ['function-sample']
+    needs:
+    - build
+    env:
+      ACTIONS_RUNNER_DEBUG: true
+
+    steps:
+
+    # Download artifact
+    - name: Download artifact from build job
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ matrix.artifact-name }}
+
+    - name: Az CLI login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ vars.AZURE_CLIENT_ID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+
+    - name: Clean-up Working Directory
+      run: rm -rf ./*
+
+    - name: Retrieve Build Artifact
+      id: build-artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ matrix.artifact-name }}
+        path: ./package
+
+    - name: Retrieve publish profile for deployment
+      id: publishProfileRetrieval
+      run: |
+        publishProfiles=$(az webapp deployment list-publishing-profiles \
+          --name func-${{ vars.BU }}-${{ inputs.Environment }}-${{ vars.APPLICATION_NAME }}-${{ vars.APPLICATION_ID }}-${{ vars.APPLICATION_ROLE }} \
+          --resource-group rg-${{ vars.BU }}-${{ inputs.Environment }}-${{ vars.APPLICATION_NAME }}-${{ vars.APPLICATION_ID }} \
+          --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} --xml)
+        echo "::add-mask::$publishProfiles"
+        echo "::set-output name=publishProfiles::$publishProfiles"
+  
+    - name: Deploy Function Paved Road
+      id: deploy-to-function
+      uses: Azure/functions-action@v1
+      with:
+        app-name: func-${{ vars.BU }}-${{ inputs.Environment }}-${{ vars.APPLICATION_NAME }}-${{ vars.APPLICATION_ID }}-pavedrd
+        package: ${{ steps.build-artifact.outputs.download-path }}
+        publish-profile: ${{ steps.publishProfileRetrieval.outputs.publishProfiles }}
